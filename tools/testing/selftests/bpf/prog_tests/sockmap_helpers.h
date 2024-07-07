@@ -264,23 +264,11 @@ static inline int add_to_sockmap(int sock_mapfd, int fd1, int fd2)
 
 static inline int create_pair(int s, int family, int sotype, int *c, int *p)
 {
-	struct sockaddr_storage addr;
-	socklen_t len;
 	int err = 0;
 
-	len = sizeof(addr);
-	err = xgetsockname(s, sockaddr(&addr), &len);
-	if (err)
-		return err;
-
-	*c = xsocket(family, sotype, 0);
+	*c = connect_to_fd_opts(s, NULL);
 	if (*c < 0)
 		return errno;
-	err = xconnect(*c, sockaddr(&addr), len);
-	if (err) {
-		err = errno;
-		goto close_cli0;
-	}
 
 	*p = xaccept_nonblock(s, NULL, NULL);
 	if (*p < 0) {
