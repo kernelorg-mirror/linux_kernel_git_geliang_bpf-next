@@ -7,12 +7,13 @@
 #define netkit_peer "nk0"
 #define netkit_name "nk1"
 
-#define ping_addr_neigh		0x0a000002 /* 10.0.0.2 */
-#define ping_addr_noneigh	0x0a000003 /* 10.0.0.3 */
+#define ping_addr_neigh		"10.0.0.2"
+#define ping_addr_noneigh	"10.0.0.3"
 
 #include "test_tc_link.skel.h"
 #include "netlink_helpers.h"
 #include "tc_helpers.h"
+#include "network_helpers.h"
 
 #define ICMP_ECHO 8
 
@@ -116,9 +117,17 @@ static void destroy_netkit(void)
 	ASSERT_EQ(if_nametoindex(netkit_name), 0, netkit_name "_ifindex");
 }
 
-static int __send_icmp(__u32 dest)
+static int bind_to_device_cb(int sock, void *opts)
 {
-	struct sockaddr_in addr;
+	return setsockopt(sock, SOL_SOCKET, SO_BINDTODEVICE,
+			  netkit_name, strlen(netkit_name) + 1);
+}
+static int __send_icmp(const char *dest)
+{
+	struct network_helper_opts opts = {
+		.proto		= IPPROTO_ICMP,
+		.post_socket_cb	= bind_to_device_cb,
+	};
 	struct icmphdr icmp;
 	int sock, ret;
 
@@ -126,33 +135,17 @@ static int __send_icmp(__u32 dest)
 	if (!ASSERT_OK(ret, "write_sysctl(net.ipv4.ping_group_range)"))
 		return ret;
 
-	sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_ICMP);
-	if (!ASSERT_GE(sock, 0, "icmp_socket"))
-		return -errno;
-
-	ret = setsockopt(sock, SOL_SOCKET, SO_BINDTODEVICE,
-			 netkit_name, strlen(netkit_name) + 1);
-	if (!ASSERT_OK(ret, "setsockopt(SO_BINDTODEVICE)"))
-		goto out;
-
-	memset(&addr, 0, sizeof(addr));
-	addr.sin_family = AF_INET;
-	addr.sin_addr.s_addr = htonl(dest);
-
 	memset(&icmp, 0, sizeof(icmp));
 	icmp.type = ICMP_ECHO;
 	icmp.echo.id = 1234;
 	icmp.echo.sequence = 1;
 
-	ret = sendto(sock, &icmp, sizeof(icmp), 0,
-		     (struct sockaddr *)&addr, sizeof(addr));
-	if (!ASSERT_GE(ret, 0, "icmp_sendto"))
-		ret = -errno;
-	else
-		ret = 0;
-out:
+	sock = send_to_addr_str(AF_INET, SOCK_DGRAM, dest, 0,
+				&icmp, sizeof(icmp), 0, &opts);
+	if (!ASSERT_OK_FD(sock, "send_to_addr_str"))
+		return -errno;
 	close(sock);
-	return ret;
+	return 0;
 }
 
 static int send_icmp(void)
